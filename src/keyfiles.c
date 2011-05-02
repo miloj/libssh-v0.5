@@ -836,6 +836,7 @@ ssh_private_key _privatekey_from_file(void *session, const char *filename,
 #elif defined HAVE_LIBCRYPTO
   DSA *dsa = NULL;
   RSA *rsa = NULL;
+  BIO *bio = NULL;
 #endif
 
   file = fopen(filename,"r");
@@ -845,24 +846,35 @@ ssh_private_key _privatekey_from_file(void *session, const char *filename,
     return NULL;
   }
 
+#ifdef HAVE_LIBCRYPTO
+  bio = BIO_new_file(filename,"r");
+  if (bio == NULL) {
+	  fclose(file);
+      ssh_set_error(session, SSH_FATAL, "Could not create BIO.");
+      return NULL;
+  }
+#endif
+
   switch (type) {
     case SSH_KEYTYPE_DSS:
 #ifdef HAVE_LIBGCRYPT
       valid = read_dsa_privatekey(file, &dsa, NULL, NULL, NULL);
 
+      fclose(file);
+
       if (!valid) {
         ssh_set_error(session, SSH_FATAL, "Parsing private key %s", filename);
 #elif defined HAVE_LIBCRYPTO
-      dsa = PEM_read_DSAPrivateKey(file, NULL, NULL, NULL);
+      dsa = PEM_read_bio_DSAPrivateKey(bio, NULL, NULL, NULL);
+
+	  BIO_free(bio);
+      fclose(file);
 
       if (dsa == NULL) {
         ssh_set_error(session, SSH_FATAL,
             "Parsing private key %s: %s",
             filename, ERR_error_string(ERR_get_error(), NULL));
-#else
-      {
 #endif
-        fclose(file);
         return NULL;
       }
       break;
@@ -870,29 +882,30 @@ ssh_private_key _privatekey_from_file(void *session, const char *filename,
 #ifdef HAVE_LIBGCRYPT
       valid = read_rsa_privatekey(file, &rsa, NULL, NULL, NULL);
 
+      fclose(file);
+
       if (!valid) {
         ssh_set_error(session, SSH_FATAL, "Parsing private key %s", filename);
 #elif defined HAVE_LIBCRYPTO
-      rsa = PEM_read_RSAPrivateKey(file, NULL, NULL, NULL);
+      rsa = PEM_read_bio_RSAPrivateKey(bio, NULL, NULL, NULL);
+
+	  BIO_free(bio);
+      fclose(file);
 
       if (rsa == NULL) {
         ssh_set_error(session, SSH_FATAL,
             "Parsing private key %s: %s",
             filename, ERR_error_string(ERR_get_error(), NULL));
-#else
-      {
 #endif
-        fclose(file);
         return NULL;
       }
       break;
     default:
-        fclose(file);
+		BIO_free(bio);
+		fclose(file);
         ssh_set_error(session, SSH_FATAL, "Invalid private key type %d", type);
         return NULL;
   }
-
-  fclose(file);
 
   privkey = malloc(sizeof(struct ssh_private_key_struct));
   if (privkey == NULL) {
